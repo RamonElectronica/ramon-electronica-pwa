@@ -68,7 +68,10 @@ export default function App() {
   const mqttPass = import.meta.env.VITE_MQTT_PASS || 'control_seguro_panas';
   const mqttUrl = import.meta.env.VITE_MQTT_URL || 'wss://ramon-electronica-backend.onrender.com';
 
-  const WS_URL = `${mqttUrl}?user=${mqttUser}&pass=${mqttPass}&username=${mqttUser}&password=${mqttPass}`;
+  // Ensure the URL connects explicitly to the standard WebSockets path '/ws' supported by our backend
+  const cleanBaseUrl = mqttUrl.endsWith('/') ? mqttUrl.slice(0, -1) : mqttUrl;
+  const wsEndpoint = cleanBaseUrl.includes('/ws') ? cleanBaseUrl : `${cleanBaseUrl}/ws`;
+  const WS_URL = `${wsEndpoint}?user=${mqttUser}&pass=${mqttPass}&username=${mqttUser}&password=${mqttPass}`;
 
   // Sincronizar persistencia
   useEffect(() => {
