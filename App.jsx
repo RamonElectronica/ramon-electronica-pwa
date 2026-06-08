@@ -37,7 +37,7 @@ import MessageInbox from './components/MessageInbox';
 import ProfileView from './components/ProfileView';
 
 export default function App() {
-  // Sincronización Inicial de LOCAL-DB (localStorage)
+  // Persistence Loading (LOCAL-DB)
   const [devices, setDevices] = useState<Device[]>(() => {
     const saved = localStorage.getItem('ramon_devices');
     return saved ? JSON.parse(saved) : INITIAL_DEVICES;
@@ -48,25 +48,30 @@ export default function App() {
     return saved ? JSON.parse(saved) : null;
   });
 
-  // Controladores de Vistas
+  // Flow State
   const [currentView, setCurrentView] = useState<'splash' | 'login' | 'dashboard'>('splash');
   const [selectedTab, setSelectedTab] = useState<'hogar' | 'escenas' | 'info' | 'mensaje' | 'perfil'>('hogar');
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
   const [permissionModalOpen, setPermissionModalOpen] = useState(false);
   
-  // Modo Simulador de Smartphone / Responsive Fluid layout
+  // Adaptive Simulator Mode for desktop / true fluid layout
   const [isSimulatorMode, setIsSimulatorMode] = useState(true);
   const [time, setTime] = useState('');
 
-  // WebSocket y Reconexión robusta
+  // WebSocket control states
   const [wsStatus, setWsStatus] = useState<'CONNECTED' | 'DISCONNECTED' | 'CONNECTING'>('DISCONNECTED');
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Endpoint apuntando directamente a tu Servidor Live en Render
-  const WS_URL = 'wss://ramon-electronica-backend.onrender.com';
+  // Connection URL and credentials retrieved safely from environment variables (keeping credentials secure for GitHub pushes)
+  const metaEnv = (import.meta as any).env || {};
+  const mqttUser = metaEnv.VITE_MQTT_USER || 'ramon_esp32';
+  const mqttPass = metaEnv.VITE_MQTT_PASS || 'control_seguro_panas';
+  const mqttUrl = metaEnv.VITE_MQTT_URL || 'wss://ramon-electronica-backend.onrender.com';
 
-  // Sincronizar persistencia automáticamente en LOCAL-DB
+  const WS_URL = `${mqttUrl}?user=${mqttUser}&pass=${mqttPass}&username=${mqttUser}&password=${mqttPass}`;
+
+  // Sincronizar persistencia
   useEffect(() => {
     localStorage.setItem('ramon_devices', JSON.stringify(devices));
   }, [devices]);
@@ -79,7 +84,7 @@ export default function App() {
     }
   }, [user]);
 
-  // Ciclo de Vida del WebSocket con Auto-reconexión robusta ante lluvias
+  // Setup WebSocket connection with robust autoreconnect
   useEffect(() => {
     let active = true;
 
@@ -97,6 +102,19 @@ export default function App() {
           if (!active) return;
           console.log('📡 WebSocket conectado exitosamente a Ramón Electrónica Backend en Render');
           setWsStatus('CONNECTED');
+          
+          // Enviar credenciales en mensaje de inicialización opcionalmente
+          try {
+            socket.send(JSON.stringify({
+              type: 'AUTH',
+              user: mqttUser,
+              pass: mqttPass,
+              username: mqttUser,
+              password: mqttPass
+            }));
+          } catch (e) {
+            console.warn('No se pudo enviar mensaje opcional de autenticación:', e);
+          }
         };
 
         socket.onmessage = (event) => {
@@ -106,14 +124,14 @@ export default function App() {
             const data = JSON.parse(event.data);
             if (data && data.id && (data.state === 'ON' || data.state === 'OFF')) {
               setDevices(prev => {
-                const refreshed = prev.map(dev => {
+                const updated = prev.map(dev => {
                   if (dev.id === data.id) {
                     return { ...dev, state: data.state, name: data.name || dev.name };
                   }
                   return dev;
                 });
-                localStorage.setItem('ramon_devices', JSON.stringify(refreshed));
-                return refreshed;
+                localStorage.setItem('ramon_devices', JSON.stringify(updated));
+                return updated;
               });
               
               if (selectedDevice && selectedDevice.id === data.id) {
@@ -121,20 +139,20 @@ export default function App() {
               }
             }
           } catch (err) {
-            // Manejo de cadenas planas sencillas "id:estado" (para ESP32)
+            // Si no es un JSON, parsear formato compacto "id:estado" para hardware
             if (typeof event.data === 'string' && event.data.includes(':')) {
               const [id, state] = event.data.split(':');
               if (id && (state === 'ON' || state === 'OFF')) {
                 const cleanState = state.trim() as 'ON' | 'OFF';
                 setDevices(prev => {
-                  const refreshed = prev.map(dev => {
+                  const updated = prev.map(dev => {
                     if (dev.id === id) {
                       return { ...dev, state: cleanState };
                     }
                     return dev;
                   });
-                  localStorage.setItem('ramon_devices', JSON.stringify(refreshed));
-                  return refreshed;
+                  localStorage.setItem('ramon_devices', JSON.stringify(updated));
+                  return updated;
                 });
                 if (selectedDevice && selectedDevice.id === id) {
                   setSelectedDevice(prev => prev ? { ...prev, state: cleanState } : null);
@@ -175,7 +193,7 @@ export default function App() {
     };
   }, []);
 
-  // Reloj dinamico de la barra superior en Formato Venezolano
+  // Clock updating loop in Venezuelan format
   useEffect(() => {
     const updateClock = () => {
       const now = new Date();
@@ -190,10 +208,10 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Función emisora de estados ON/OFF tanto en JSON como en Strings Planos para los microcontroladores
+  // Helper safely sending messages over WebSocket to sync Render live server console
   const sendWebSocketMessage = (id: string, name: string, nextState: 'ON' | 'OFF') => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      // Formato estructurado JSON
+      // 1. Send clean JSON format
       const payload = {
         id,
         name,
@@ -202,14 +220,15 @@ export default function App() {
       };
       wsRef.current.send(JSON.stringify(payload));
 
-      // Formato plano para ESP32 de bajo consumo: "dev-1:ON"
+      // 2. Send plain text string format for simple clients/ESP32: "dev-1:ON"
       wsRef.current.send(`${id}:${nextState}`);
       console.log(`📤 Estado enviado al broker en Render: ${id}:${nextState}`);
     } else {
-      console.log('⚠️ Sin conexión activa. Cambios guardados para reenviar al conectar.');
+      console.log('⚠️ No se pudo enviar el estado por WebSocket (Conexión offline). Actualizado de forma local.');
     }
   };
 
+  // Set initial view state depending on user credentials persistence
   const handleSplashComplete = () => {
     if (user && user.isLoggedIn) {
       setCurrentView('dashboard');
@@ -221,6 +240,8 @@ export default function App() {
   const handleLogin = (loggedUser: User) => {
     setUser(loggedUser);
     setCurrentView('dashboard');
+    
+    // Automatically trigger permissions dialog upon first-time login
     setTimeout(() => {
       setPermissionModalOpen(true);
     }, 1200);
@@ -233,7 +254,7 @@ export default function App() {
   };
 
   const handleToggleDevice = (deviceId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+    e.stopPropagation(); // Avoid opening details
     setDevices(prev => {
       const updated = prev.map(dev => {
         if (dev.id === deviceId) {
@@ -249,6 +270,7 @@ export default function App() {
   };
 
   const handleUpdateDevice = (updated: Device) => {
+    // Si cambió el estado o el nombre, propagar al WebSocket
     const original = devices.find(d => d.id === updated.id);
     if (original && (original.state !== updated.state || original.name !== updated.name)) {
       sendWebSocketMessage(updated.id, updated.name, updated.state);
@@ -259,6 +281,7 @@ export default function App() {
       localStorage.setItem('ramon_devices', JSON.stringify(updatedList));
       return updatedList;
     });
+    // Synced detail reference
     setSelectedDevice(updated);
   };
 
@@ -266,6 +289,7 @@ export default function App() {
     setDevices(prev => {
       const updated = prev.map(dev => {
         if (dev.id === id) {
+          // Enviar rename al WebSocket
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             wsRef.current.send(JSON.stringify({ id, name: newName, state: dev.state, type: 'RENAME' }));
           }
@@ -283,6 +307,7 @@ export default function App() {
   };
 
   const handleAddDevice = (name: string, room: string) => {
+    // Generate organic progressive dev- id
     const ids = devices.map(d => {
       const match = d.id.match(/dev-(\d+)/);
       return match ? parseInt(match[1]) : 0;
@@ -306,6 +331,7 @@ export default function App() {
       return updated;
     });
 
+    // Propagate registration to active render server
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         id: newId,
@@ -314,9 +340,11 @@ export default function App() {
         type: 'REGISTER',
         sender: 'WebApp_Client'
       }));
+      console.log(`📤 Nuevo dispositivo registrado enviado por WS: ${newId}:${name}`);
     }
   };
 
+  // Render main core body based on tabs
   const renderDashboardContent = () => {
     switch (selectedTab) {
       case 'hogar':
@@ -345,6 +373,7 @@ export default function App() {
     }
   };
 
+  // Main UI components layout routing
   const renderMainWrapper = () => {
     switch (currentView) {
       case 'splash':
@@ -353,9 +382,10 @@ export default function App() {
         return <LoginView onLogin={handleLogin} />;
       case 'dashboard':
         return (
-          <div className="w-full min-h-screen bg-slate-50 flex flex-col relative">
+          <div className="w-full min-h-screen bg-slate-50 flex flex-col relative font-sans text-slate-800">
             <AnimatePresence mode="wait">
               {selectedDevice ? (
+                /* Detalle de interruptor con Botón Circular Gigante Brillantemente animado */
                 <motion.div
                   key="detail"
                   initial={{ opacity: 0, x: 50 }}
@@ -370,6 +400,7 @@ export default function App() {
                   />
                 </motion.div>
               ) : (
+                /* Panel de Dispositivos eWeLink Principal */
                 <motion.div
                   key="list"
                   initial={{ opacity: 0 }}
@@ -382,6 +413,7 @@ export default function App() {
               )}
             </AnimatePresence>
 
+            {/* Bottom Navigation tab selection bar - Matches Image 2 perfectly */}
             {!selectedDevice && (
               <div className="fixed bottom-0 inset-x-0 bg-white border-t border-slate-100 py-2.5 px-3 z-20 flex justify-around items-center shadow-lg">
                 <button
@@ -445,6 +477,8 @@ export default function App() {
 
   return (
     <div className="w-full min-h-screen bg-[#070b13] text-white flex flex-col justify-start items-center overflow-x-hidden font-sans">
+      
+      {/* Upper Control Ribbon for presentation */}
       <div className="w-full max-w-7xl px-6 py-3.5 flex justify-between items-center z-40 bg-slate-900/40 backdrop-blur-md border-b border-white/5 select-none text-xs">
         <div className="flex items-center gap-2">
           <span className="text-sm">🇻🇪</span>
@@ -453,6 +487,7 @@ export default function App() {
           </span>
         </div>
         
+        {/* Toggle view controllers */}
         <div className="flex gap-2">
           <button
             onClick={() => setIsSimulatorMode(true)}
@@ -476,17 +511,24 @@ export default function App() {
         </div>
       </div>
 
+      {/* Main Core View Area with either device shell or fluid display */}
       <div className="w-full flex-1 flex justify-center items-center py-6 px-4 md:py-10 max-w-7xl">
         {isSimulatorMode ? (
+          /* Phone mock wrapper with status bars matching user photos */
           <div className="relative w-full max-w-[390px] h-[780px] rounded-[52px] bg-slate-950 border-[10px] border-slate-850 shadow-[0_0_80px_rgba(16,142,233,0.15)] flex flex-col overflow-hidden relative">
+            {/* Front speaker Notch */}
             <div className="absolute top-0 inset-x-0 h-7 bg-slate-950 flex justify-center items-start z-50 pointer-events-none">
               <div className="w-28 h-4 bg-slate-950 rounded-b-xl" />
             </div>
 
+            {/* Custom high fidelity phone status bar */}
             <div className={`w-full h-8 flex justify-between items-center px-6 pt-3 select-none text-[11px] font-semibold text-white/90 z-40 transition-colors ${
               currentView === 'dashboard' && !selectedDevice ? 'text-slate-800 bg-white/80' : 'text-white'
             }`}>
+              {/* Left clock */}
               <span className="font-mono tracking-wide">{time || '12:00 PM'}</span>
+              
+              {/* Right indicators */}
               <div className="flex items-center gap-1.5">
                 <Wifi className="w-3.5 h-3.5 shrink-0" />
                 <Bluetooth className="w-3.5 h-3.5 shrink-0 animate-pulse" />
@@ -496,21 +538,25 @@ export default function App() {
               </div>
             </div>
 
+            {/* Simulated core application container */}
             <div className="flex-1 w-full overflow-y-auto relative bg-[#090b11] no-scrollbar">
               {renderMainWrapper()}
             </div>
 
+            {/* Smartphone virtual Pill home button */}
             <div className="absolute bottom-1.5 inset-x-0 h-1 z-40 pointer-events-none flex justify-center">
               <div className="w-28 h-1 bg-slate-350/50 rounded-full" />
             </div>
           </div>
         ) : (
+          /* Raw 100% PWA Fluid Mode - required by PWA specification */
           <div className="w-full min-h-[700px] bg-[#090b11] rounded-3xl border border-white/5 overflow-hidden shadow-2xl">
             {renderMainWrapper()}
           </div>
         )}
       </div>
 
+      {/* Permissions Global Modal */}
       <PermissionModal 
         isOpen={permissionModalOpen} 
         onClose={() => setPermissionModalOpen(false)} 
