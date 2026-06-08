@@ -37,7 +37,7 @@ import MessageInbox from './components/MessageInbox';
 import ProfileView from './components/ProfileView';
 
 export default function App() {
-  // Persistence Loading (LOCAL-DB)
+  // Persistence Loading
   const [devices, setDevices] = useState<Device[]>(() => {
     const saved = localStorage.getItem('ramon_devices');
     return saved ? JSON.parse(saved) : INITIAL_DEVICES;
@@ -123,37 +123,29 @@ export default function App() {
           try {
             const data = JSON.parse(event.data);
             if (data && data.id && (data.state === 'ON' || data.state === 'OFF')) {
-              setDevices(prev => {
-                const updated = prev.map(dev => {
-                  if (dev.id === data.id) {
-                    return { ...dev, state: data.state, name: data.name || dev.name };
-                  }
-                  return dev;
-                });
-                localStorage.setItem('ramon_devices', JSON.stringify(updated));
-                return updated;
-              });
+              setDevices(prev => prev.map(dev => {
+                if (dev.id === data.id) {
+                  return { ...dev, state: data.state, name: data.name || dev.name };
+                }
+                return dev;
+              }));
               
               if (selectedDevice && selectedDevice.id === data.id) {
                 setSelectedDevice(prev => prev ? { ...prev, state: data.state, name: data.name || prev.name } : null);
               }
             }
           } catch (err) {
-            // Si no es un JSON, parsear formato compacto "id:estado" para hardware
+            // Si no es un JSON, parsear formato "id:estado"
             if (typeof event.data === 'string' && event.data.includes(':')) {
               const [id, state] = event.data.split(':');
               if (id && (state === 'ON' || state === 'OFF')) {
                 const cleanState = state.trim() as 'ON' | 'OFF';
-                setDevices(prev => {
-                  const updated = prev.map(dev => {
-                    if (dev.id === id) {
-                      return { ...dev, state: cleanState };
-                    }
-                    return dev;
-                  });
-                  localStorage.setItem('ramon_devices', JSON.stringify(updated));
-                  return updated;
-                });
+                setDevices(prev => prev.map(dev => {
+                  if (dev.id === id) {
+                    return { ...dev, state: cleanState };
+                  }
+                  return dev;
+                }));
                 if (selectedDevice && selectedDevice.id === id) {
                   setSelectedDevice(prev => prev ? { ...prev, state: cleanState } : null);
                 }
@@ -171,6 +163,7 @@ export default function App() {
 
         socket.onerror = (error) => {
           console.error('🔥 Error detectado en WebSocket:', error);
+          // onclose gatillará la reconexión de forma segura
         };
 
       } catch (err) {
@@ -197,6 +190,7 @@ export default function App() {
   useEffect(() => {
     const updateClock = () => {
       const now = new Date();
+      // Format 12-hour
       let hours = now.getHours();
       const minutes = now.getMinutes().toString().padStart(2, '0');
       const suffix = hours >= 12 ? 'PM' : 'AM';
@@ -382,7 +376,7 @@ export default function App() {
         return <LoginView onLogin={handleLogin} />;
       case 'dashboard':
         return (
-          <div className="w-full min-h-screen bg-slate-50 flex flex-col relative font-sans text-slate-800">
+          <div className="w-full min-h-screen bg-slate-50 flex flex-col relative">
             <AnimatePresence mode="wait">
               {selectedDevice ? (
                 /* Detalle de interruptor con Botón Circular Gigante Brillantemente animado */
@@ -413,7 +407,7 @@ export default function App() {
               )}
             </AnimatePresence>
 
-            {/* Bottom Navigation tab selection bar - Matches Image 2 perfectly */}
+            {/* Bottom Navigation tab selection bar */}
             {!selectedDevice && (
               <div className="fixed bottom-0 inset-x-0 bg-white border-t border-slate-100 py-2.5 px-3 z-20 flex justify-around items-center shadow-lg">
                 <button
@@ -515,7 +509,7 @@ export default function App() {
       <div className="w-full flex-1 flex justify-center items-center py-6 px-4 md:py-10 max-w-7xl">
         {isSimulatorMode ? (
           /* Phone mock wrapper with status bars matching user photos */
-          <div className="relative w-full max-w-[390px] h-[780px] rounded-[52px] bg-slate-950 border-[10px] border-slate-850 shadow-[0_0_80px_rgba(16,142,233,0.15)] flex flex-col overflow-hidden relative">
+          <div className="relative w-full max-w-[390px] h-[780px] rounded-[52px] bg-slate-950 border-[10px] border-slate-850 shadow-[0_0_80px_rgba(16,142,233,0.15)] flex flex-col overflow-hidden">
             {/* Front speaker Notch */}
             <div className="absolute top-0 inset-x-0 h-7 bg-slate-950 flex justify-center items-start z-50 pointer-events-none">
               <div className="w-28 h-4 bg-slate-950 rounded-b-xl" />
