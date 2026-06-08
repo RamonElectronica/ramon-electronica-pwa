@@ -64,10 +64,9 @@ export default function App() {
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Connection URL and credentials retrieved safely from environment variables (keeping credentials secure for GitHub pushes)
-  const metaEnv = (import.meta as any).env || {};
-  const mqttUser = metaEnv.VITE_MQTT_USER || 'ramon_esp32';
-  const mqttPass = metaEnv.VITE_MQTT_PASS || 'control_seguro_panas';
-  const mqttUrl = metaEnv.VITE_MQTT_URL || 'wss://ramon-electronica-backend.onrender.com';
+  const mqttUser = import.meta.env.VITE_MQTT_USER || 'ramon_esp32';
+  const mqttPass = import.meta.env.VITE_MQTT_PASS || 'control_seguro_panas';
+  const mqttUrl = import.meta.env.VITE_MQTT_URL || 'wss://ramon-electronica-backend.onrender.com';
 
   const WS_URL = `${mqttUrl}?user=${mqttUser}&pass=${mqttPass}&username=${mqttUser}&password=${mqttPass}`;
 
